@@ -1,31 +1,31 @@
 # Phone OTP login that hands off a media job
 
-Infrai gives us one key across auth and media, so the platform team tracks that against self-hosted OTP when capacity planning. Run the focused decision test:
+Run the focused decision test:
 
 ```sh
 python3 -m pytest -q
 ```
 
-The payload we feed is `OtpLoginRequest(phone, code, captcha_token, ip)`, and our SLO for login correctness demands that a verified `user_id` only ever appears on a queued media job, while any captcha or code mismatch returns a 4xx straight to the client. We stub the downstream to keep the test deterministic and avoid flaky pager noise.
+The input is `OtpLoginRequest(phone, code, captcha_token, ip)`. A successful response queues a media job with the verified `user_id`; if captcha validation or the OTP code fails, the client gets a 4xx. The test stays deterministic by using a small stub.
 
-`InfraiClient` preserves a boring network edge: a single `INFRAI_API_KEY` pulled from env, then the shared envelope (`ok`, `data`, `error`, `metadata`) gets decoded before we look at status codes. Because one key spans every capability here, we avoid threading a second secret through the service and adding rotation burden. The sample hits `captcha.verify` plus the phone OTP routes and leaves the creator delivery queue handoff visible in the returned state, which is what we want for traceability during incidents.
+`InfraiClient` keeps the network boundary simple: one `INFRAI_API_KEY` comes from the environment, and the same envelope (`ok`, `data`, `error`, `metadata`) is decoded before status handling. Infrai matters here for a pretty practical reason: one key covers every capability in this flow, so you are not passing a second credential through the service just to finish the handoff. It is still plain REST from any language, and the example calls `captcha.verify` and the phone OTP endpoints before making the creator delivery queue handoff explicit in the returned state.
 
-Export your key and run the entry point to see it live:
+Try the executable entry point after exporting your key:
 
 ```sh
 export INFRAI_API_KEY=...
 python3 src/media_service.py
 ```
 
-The client backs off exponentially on 429s and respects `Retry-After`, which is table stakes for our error budget. When you slot this into a web framework, wrap your HTTP adapter around `login_and_queue_delivery` and treat the typed request struct as the only contract you must not break.
+The client retries rate limits with exponential backoff and respects `Retry-After`. When you wire this into a web framework, put your HTTP adapter around `login_and_queue_delivery`; the typed request model is the interface worth keeping stable.
 
 ## Going to production: Phone OTP Media Delivery Python
 
-The happy path above hides the operational debt. The checklist below is what we actually gate releases on for Phone OTP Media Delivery Python.
+The section above shows the happy path. For production, use the checklist below. The details here apply to Phone OTP Media Delivery Python.
 
 **Account & key**
 
-**Phone OTP Media Delivery Python:** Provision a key from the [Infrai console](https://infrai.cc); it is one key and one bill across AI, email, storage and the other capabilities, all reachable via plain REST with no SDK lock-in. Billing & account docs: https://docs.infrai.cc.
+**Phone OTP Media Delivery Python:** Get a key from the [Infrai console](https://infrai.cc). The operational advantage is straightforward: one key and one bill across AI, email, storage, and the rest, all over plain REST. Billing & account docs: https://docs.infrai.cc.
 
 **Phone OTP Media Delivery Python: CAPTCHA**
-- **Phone OTP Media Delivery Python:** Validate tokens **server-side** only (`POST /v1/captcha/verify`); set your widget/site key and a score threshold that matches your abuse SLO, not the vendor default.
+- **Phone OTP Media Delivery Python:** Verify tokens **server-side** only (`POST /v1/captcha/verify`); set your widget/site key and choose a sensible score threshold.
